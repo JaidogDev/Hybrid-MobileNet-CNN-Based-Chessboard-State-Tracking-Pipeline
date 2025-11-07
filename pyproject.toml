@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Chess_Detection_Competition"
+version = "0.1.0"
+description = "Hybrid Chessboard State Tracking (Homography + Per-Cell CNN + PGN)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Bank", email = "you@example.com" }]
+license = { text = "MIT" }
+dependencies = []  # ใช้ requirements.txt ติดตั้งแยก
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

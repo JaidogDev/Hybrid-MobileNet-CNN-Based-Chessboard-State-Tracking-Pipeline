@@ -1,0 +1,10 @@
+opencv-python-headless==4.10.0.84
+numpy==2.3.4
+PyYAML==6.0.3
+tqdm==4.67.1
+tensorflow==2.20.0
+scikit-learn
+python-chess
+matplotlib
+pandas
+ipykernel

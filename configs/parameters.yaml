@@ -1,0 +1,56 @@
+# configs/parameters.yaml
+paths:
+  videos_dir: "data/public/videos"
+  cells_public_dir: "data/public/cells"
+  cells_bootstrap_dir: "data/bootstrap/cells"
+  cells_augmented_dir: "data/augmented/cells"
+  final_train_dir: "data/final/train"
+  final_val_dir: "data/final/val"
+  model_path: "models/cell_cnn.h5"
+  submission_dir: "submissions"
+
+classes:
+  - Empty
+  - WP
+  - WR
+  - WN
+  - WB
+  - WQ
+  - WK
+  - BP
+  - BR
+  - BN
+  - BB
+  - BQ
+  - BK
+
+board:
+  warp_size: 800
+  canny_low: 60
+  canny_high: 180
+  hough_threshold: 120
+  min_line_length: 120
+  max_line_gap: 10
+
+cells:
+  img_size: 96
+
+train:
+  epochs: 10
+  batch_size: 64
+  lr: 0.0005
+  val_split: 0.1
+  augment:
+    rotation: 0.10
+    zoom: 0.10
+    contrast: 0.20
+    brightness: 0.20
+    erase_prob: 0.15
+
+inference:
+  sample_step: 3
+  smooth_k: 5
+  settle: 3
+
+pgn:
+  try_promotions: ["Q","R","B","N"]
