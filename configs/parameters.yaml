@@ -31,6 +31,11 @@ board:
   hough_threshold: 120
   min_line_length: 120
   max_line_gap: 10
+  refine_dx: 3         # เลื่อนแกน x ได้สูงสุด ±3 px
+  refine_dy: 3         # เลื่อนแกน y ได้สูงสุด ±3 px
+  refine_rot_deg: 1.0  # หมุนได้ ±1 องศา
+  refine_scale: 0.01   # สเกลได้ ±1%
+
 
 cells:
   img_size: 96

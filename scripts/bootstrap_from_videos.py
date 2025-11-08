@@ -1,7 +1,7 @@
 # scripts/bootstrap_from_videos.py
 import glob, os
-from src.utils import load_config, get_logger
-from src.cells import bootstrap_from_first_frame
+from src.utils import load_config, get_logger # type: ignore
+from src.cells import bootstrap_from_first_frame # type: ignore
 
 cfg = load_config()
 log = get_logger()
