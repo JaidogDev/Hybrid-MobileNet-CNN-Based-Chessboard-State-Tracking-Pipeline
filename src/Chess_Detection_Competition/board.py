@@ -298,15 +298,136 @@ def warp_board(bgr, cfg=DEFAULT_CFG):
     # return warped, M, src
     return warped, M
 
-def split_grid(warped, cell_px):
+# def split_grid(warped, cell_px):
+#     H, W = warped.shape[:2]
+#     assert H==W, "Warp must be square"
+#     step = H//8
+#     cells = []
+#     for r in range(8):
+#         for c in range(8):
+#             y0,y1 = r*step, (r+1)*step
+#             x0,x1 = c*step, (c+1)*step
+#             patch = warped[y0:y1, x0:x1]
+#             patch = cv2.resize(patch, (cell_px, cell_px), interpolation=cv2.INTER_AREA)
+#             cells.append(((r,c), patch))
+#     return cells
+
+# วางเพิ่มไว้ใน board.py (นอกเหนือจากของเดิม)
+def _prep_for_lines(img):
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    g = cv2.createCLAHE(2.0,(8,8)).apply(g)
+    g = cv2.bilateralFilter(g, 5, 50, 50)     # ลด noise แต่คงขอบ
+    # unsharp เล็กน้อยช่วยดันเส้นช่อง
+    blur = cv2.GaussianBlur(g, (0,0), 1.0)
+    sharp = cv2.addWeighted(g, 1.5, blur, -0.5, 0)
+    edges = cv2.Canny(sharp, 60, 180)
+    return edges
+
+def _cluster_positions(vals, want=9):
+    # รวมกลุ่มตำแหน่ง (rho ที่แปลงเป็นพิกัดภาพแล้ว) ให้ได้ประมาณ 9 ตำแหน่ง
+    if len(vals) < want:
+        return None
+    data = np.array(vals, dtype=np.float32).reshape(-1,1)
+    crit = (cv2.TERM_CRITERIA_EPS+cv2.TERM_CRITERIA_MAX_ITER, 50, 1e-3)
+    K = min(max(want, 2), len(vals))
+    _, labels, centers = cv2.kmeans(data, K, None, crit, 5, cv2.KMEANS_PP_CENTERS)
+    centers = centers.ravel()
+    # รวม center ที่ใกล้กันมาก ๆ
+    centers = np.unique(np.round(centers, 1))
+    centers.sort()
+    # ถ้ายังไม่ครบ 9 ให้ interpolate เติม
+    if len(centers) < want:
+        centers = np.linspace(min(vals), max(vals), want)
+    return centers[:want]
+
+def _grid_lines_from_hough(warped, want=9):
+    """
+    คืน (xs, ys): ตำแหน่งเส้นกริด 9 แนวตั้ง/แนวนอน บนภาพ warp แล้ว
+    """
     H, W = warped.shape[:2]
-    assert H==W, "Warp must be square"
-    step = H//8
+    edges = _prep_for_lines(warped)
+
+    # Hough แบบ (rho, theta)
+    thr = max(120, int(0.35*min(H,W)))  # โหวตขั้นต่ำ
+    HL = cv2.HoughLines(edges, 1, np.pi/180, thr)
+    if HL is None:
+        return None, None
+
+    rhos   = HL[:,0,0]
+    thetas = HL[:,0,1]
+
+    # แยกแนวตั้ง (|cosθ| สูง) กับแนวนอน (|sinθ| สูง)
+    v_idx = np.where((np.cos(thetas)**2 > 0.5))[0]
+    h_idx = np.where((np.sin(thetas)**2 > 0.5))[0]
+    if len(v_idx) < 4 or len(h_idx) < 4:
+        return None, None
+
+    # แปลง (rho,theta) เป็นตำแหน่ง x หรือ y บนภาพ
+    # สำหรับเส้นแนวตั้ง: x ≈ rho / cosθ
+    xs_raw = []
+    for i in v_idx:
+        ct = np.cos(thetas[i]); 
+        if abs(ct) < 1e-6: 
+            continue
+        x = rhos[i] / ct
+        if -W*0.5 <= x <= W*1.5:   # อนุโลมเลยขอบหน่อย
+            xs_raw.append(x)
+
+    # สำหรับเส้นแนวนอน: y ≈ rho / sinθ
+    ys_raw = []
+    for i in h_idx:
+        st = np.sin(thetas[i]); 
+        if abs(st) < 1e-6: 
+            continue
+        y = rhos[i] / st
+        if -H*0.5 <= y <= H*1.5:
+            ys_raw.append(y)
+
+    xs_c = _cluster_positions(xs_raw, want=want)
+    ys_c = _cluster_positions(ys_raw, want=want)
+    if xs_c is None or ys_c is None:
+        return None, None
+
+    xs = np.clip(xs_c, 0, W-1).astype(int); xs.sort()
+    ys = np.clip(ys_c, 0, H-1).astype(int); ys.sort()
+    return xs, ys
+
+# --------- แทนที่ฟังก์ชัน split_grid เดิมด้วยอันนี้ ---------
+def split_grid(warped, cell_px):
+    """
+    ครอป 8x8 ช่องให้พอดีเส้นจริงบนภาพ warp แล้ว
+    คืน: [((r,c), BGR)]
+    ถ้าหาเส้นไม่ได้ -> fallback เป็นหารเท่ากัน
+    """
+    H, W = warped.shape[:2]
+    xs, ys = _grid_lines_from_hough(warped, want=9)
+
     cells = []
+    if xs is None or ys is None or len(xs)<9 or len(ys)<9:
+        # Fallback: แบ่งเท่ากัน (แบบเดิม)
+        step = H // 8
+        for r in range(8):
+            for c in range(8):
+                y0,y1 = r*step, (r+1)*step
+                x0,x1 = c*step, (c+1)*step
+                patch = warped[y0:y1, x0:x1]
+                patch = cv2.resize(patch, (cell_px, cell_px), interpolation=cv2.INTER_AREA)
+                cells.append(((r,c), patch))
+        return cells
+
+    # ใช้เส้นจริง 9×9 → ครอป 8×8
+    margin = max(1, int(0.01*min(H,W)))  # กันขอบล้ำเข้า border
     for r in range(8):
         for c in range(8):
-            y0,y1 = r*step, (r+1)*step
-            x0,x1 = c*step, (c+1)*step
+            x0, x1 = xs[c], xs[c+1]
+            y0, y1 = ys[r], ys[r+1]
+            x0 = max(0, x0+margin); x1 = min(W, x1-margin)
+            y0 = max(0, y0+margin); y1 = min(H, y1-margin)
+            if x1 <= x0 or y1 <= y0:
+                # safety fallback เฉพาะช่องนี้
+                step = H // 8
+                y0,y1 = r*step, (r+1)*step
+                x0,x1 = c*step, (c+1)*step
             patch = warped[y0:y1, x0:x1]
             patch = cv2.resize(patch, (cell_px, cell_px), interpolation=cv2.INTER_AREA)
             cells.append(((r,c), patch))
