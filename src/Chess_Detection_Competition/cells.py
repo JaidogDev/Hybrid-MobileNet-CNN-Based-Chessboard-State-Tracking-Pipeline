@@ -1,4 +1,4 @@
-import cv2, numpy as np, os, random
+import cv2, numpy as np, os, random, warnings
 from .utils import ensure_dir
 from .board import warp_board, split_grid
 
@@ -33,7 +33,12 @@ def bootstrap_from_first_frame(video_path, out_dir, cfg):
     return saved
 
 def simple_augment(img):
-    # เบาๆพอเริ่ม: rotate ±15°, brightness/contrast, Gaussian blur, cutout
+    warnings.warn(
+        "simple_augment() is deprecated and will be removed in a future release. "
+        "Use your TF/Keras augmentation pipeline instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     h,w = img.shape[:2]
     M = cv2.getRotationMatrix2D((w//2,h//2), random.uniform(-15,15), 1.0)
     aug = cv2.warpAffine(img, M, (w,h), borderMode=cv2.BORDER_REFLECT)
