@@ -2,34 +2,81 @@ import cv2, numpy as np, os, random, warnings
 from .utils import ensure_dir
 from .board import warp_board, split_grid
 
-CLASSES = ["Empty","WP","WN","WB","WR","WQ","WK","BP","BN","BB","BR","BQ","BK"]
+CLASSES_13 = ["Empty","WP","WN","WB","WR","WQ","WK","BP","BN","BB","BR","BQ","BK"]
 INITIAL_RANKS = [
     ['BR','BN','BB','BQ','BK','BB','BN','BR'],
     ['BP']*8, ['Empty']*8, ['Empty']*8,
     ['Empty']*8, ['Empty']*8, ['WP']*8,
     ['WR','WN','WB','WQ','WK','WB','WN','WR']
 ]
-LABEL2IDX = {c:i for i,c in enumerate(CLASSES)}
+LABEL2IDX = {c:i for i,c in enumerate(CLASSES_13)}
 
 def bootstrap_from_first_frame(video_path, out_dir, cfg):
-    ensure_dir(out_dir)
+    """
+    Extract cells from first video frame (including Empty cells)
+    """
+    import cv2, os, chess
+    from pathlib import Path
+    
     cap = cv2.VideoCapture(video_path)
     ok, frame = cap.read()
     cap.release()
-    if not ok:
-        raise RuntimeError(f"Cannot read first frame: {video_path}")
-
-    warped,_ = warp_board(frame, cfg)
-    cells = split_grid(warped, cfg["cells"]["img_size"])
-
+    
+    if not ok or frame is None:
+        print(f"[skip] cannot read {video_path}")
+        return 0
+    
+    # Warp board
+    try:
+        from Chess_Detection_Competition.improved_board import warp_board_v2 as warp_board
+    except:
+        from Chess_Detection_Competition.board import warp_board
+    
+    warped, _ = warp_board(frame, cfg, manual_mode=False)
+    
+    # Split into 8x8
+    try:
+        from Chess_Detection_Competition.improved_board import split_grid_v2 as split_grid
+    except:
+        from Chess_Detection_Competition.board import split_grid
+    
+    img_size = int(cfg["cells"]["img_size"])
+    cells = split_grid(warped, img_size)
+    
+    # Starting position FEN
+    board = chess.Board()
+    
     saved = 0
-    for (r,c), patch in cells:
-        label = INITIAL_RANKS[r][c]
-        cls_dir = os.path.join(out_dir, label)
-        ensure_dir(cls_dir)
-        fname = f"{os.path.splitext(os.path.basename(video_path))[0]}_{r}{c}.jpg"
-        cv2.imwrite(os.path.join(cls_dir, fname), patch)
-        saved += 1
+    out_path = Path(out_dir)
+    
+    for (r, c), patch in cells:
+        # Convert (r,c) → chess square
+        file_idx = c  # a=0, b=1, ..., h=7
+        rank_idx = 7 - r  # rank 8 = row 0
+        sq = chess.square(file_idx, rank_idx)
+        
+        piece = board.piece_at(sq)
+        
+        # ✅ ตรวจสอบว่าเป็น Empty
+        if piece is None:
+            label = "Empty"
+        else:
+            # Map chess.Piece → label
+            color = "W" if piece.color == chess.WHITE else "B"
+            ptype = {
+                chess.PAWN: "P", chess.ROOK: "R", chess.KNIGHT: "N",
+                chess.BISHOP: "B", chess.QUEEN: "Q", chess.KING: "K"
+            }[piece.piece_type]
+            label = f"{color}{ptype}"
+        
+        # Save
+        label_dir = out_path / label
+        label_dir.mkdir(parents=True, exist_ok=True)
+        
+        fname = f"{Path(video_path).stem}_r{r}c{c}.jpg"
+        if cv2.imwrite(str(label_dir / fname), patch):
+            saved += 1
+    
     return saved
 
 def simple_augment(img):

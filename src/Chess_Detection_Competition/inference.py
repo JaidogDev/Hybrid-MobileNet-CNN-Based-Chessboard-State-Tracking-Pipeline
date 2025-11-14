@@ -9,9 +9,10 @@ import cv2
 import numpy as np
 import chess
 import tensorflow as tf
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input # type: ignore
 
-from .board import warp_board, split_grid
+from .board import warp_board
+from .improved_board import split_grid_v2  # ✅ Use improved version!
 from .model import load_model
 from .pgn import labels_to_board, san_list_to_pgn
 
@@ -29,6 +30,13 @@ def _load_classes(root: Path) -> List[str]:
 
 def _prep_tensor(bgr: np.ndarray, size: int) -> np.ndarray:
     """BGR -> RGB -> preprocess_input -> (1,H,W,3) float32"""
+    # ✅ เพิ่ม histogram equalization
+    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = cv2.equalizeHist(l)
+    lab = cv2.merge([l, a, b])
+    bgr = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    
     rgb = cv2.cvtColor(cv2.resize(bgr, (size, size)), cv2.COLOR_BGR2RGB).astype(np.float32)
     x   = preprocess_input(rgb)
     return np.expand_dims(x, axis=0)
@@ -45,9 +53,16 @@ def orientation_score(lbls: List[List[str]]) -> int:
     """ให้คะแนนสูงเมื่อฝั่งล่างเป็นขาวเยอะ ฝั่งบนเป็นดำเยอะ"""
     W = {"WP","WR","WN","WB","WQ","WK"}
     B = {"BP","BR","BN","BB","BQ","BK"}
-    bottom = sum(lbl in W for r in range(4,8) for lbl in lbls[r])
-    top    = sum(lbl in B for r in range(0,4) for lbl in lbls[r])
-    return int(bottom + top)
+    
+    # ✅ ปรับเพิ่มน้ำหนักให้ตรวจจับ starting position
+    bottom_white = sum(lbl in W for r in range(6, 8) for lbl in lbls[r])  # แถว 6-7
+    top_black    = sum(lbl in B for r in range(0, 2) for lbl in lbls[r])  # แถว 0-1
+    
+    # ตรวจจับแถวเบี้ย (pawn row)
+    white_pawn_row = sum(lbls[6][c] == "WP" for c in range(8))
+    black_pawn_row = sum(lbls[1][c] == "BP" for c in range(8))
+    
+    return int(bottom_white + top_black + white_pawn_row*2 + black_pawn_row*2)
 
 
 # --------------------------- core predictor ---------------------------
@@ -68,7 +83,7 @@ class TemporalBoardPredictor:
 
     def predict_labels8x8(self, warped_bgr: np.ndarray) -> Tuple[List[List[str]], np.ndarray]:
         """Return (labels 8x8, confs 8x8)."""
-        cells = split_grid(warped_bgr, self.img_size)
+        cells = split_grid_v2(warped_bgr, self.img_size)  # ✅ Use improved version!
         X = []
         for _, patch in cells:
             X.append(preprocess_input(cv2.cvtColor(cv2.resize(patch, (self.img_size, self.img_size)),

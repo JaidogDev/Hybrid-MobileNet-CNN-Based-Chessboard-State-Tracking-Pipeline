@@ -1,9 +1,81 @@
 # ===== FIX 1: Improve Homography + Add Rotation Correction =====
 import cv2
 import numpy as np
+import os
+
+# Global variables for mouse callback
+_selected_points = []
+_temp_img = None
+_display_img = None
+_scale_factor = 1.0
+
+def _mouse_callback(event, x, y, flags, param):
+    """Mouse callback for manual corner selection"""
+    global _selected_points, _temp_img, _display_img, _scale_factor
+    
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if len(_selected_points) < 4:
+            real_x = int(x / _scale_factor)
+            real_y = int(y / _scale_factor)
+            
+            _selected_points.append((real_x, real_y))
+            print(f"Point {len(_selected_points)}: ({real_x}, {real_y})")
+            
+            cv2.circle(_temp_img, (real_x, real_y), 10, (0, 255, 0), -1)
+            cv2.putText(_temp_img, str(len(_selected_points)), (real_x+15, real_y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            _display_img = cv2.resize(_temp_img, None, fx=_scale_factor, fy=_scale_factor)
+            cv2.imshow("Select 4 Corners (TL, TR, BR, BL)", _display_img)
+
+
+def select_corners_manually(bgr, max_display_height=800):
+    """Manual corner selection with display scaling"""
+    global _selected_points, _temp_img, _display_img, _scale_factor
+    
+    _selected_points = []
+    _temp_img = bgr.copy()
+    
+    h, w = bgr.shape[:2]
+    if h > max_display_height:
+        _scale_factor = max_display_height / h
+    else:
+        _scale_factor = 1.0
+    
+    _display_img = cv2.resize(_temp_img, None, fx=_scale_factor, fy=_scale_factor)
+    
+    cv2.namedWindow("Select 4 Corners (TL, TR, BR, BL)", cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback("Select 4 Corners (TL, TR, BR, BL)", _mouse_callback)
+    
+    print("\n=== Manual Corner Selection ===")
+    print("Click 4 corners: TL -> TR -> BR -> BL")
+    print("Press 'r' to reset, 'q' when done")
+    
+    while True:
+        cv2.imshow("Select 4 Corners (TL, TR, BR, BL)", _display_img)
+        key = cv2.waitKey(1) & 0xFF
+        
+        if key == ord('r'):
+            _selected_points = []
+            _temp_img = bgr.copy()
+            _display_img = cv2.resize(_temp_img, None, fx=_scale_factor, fy=_scale_factor)
+            print("Reset!")
+        
+        elif key == ord('q') and len(_selected_points) == 4:
+            break
+        
+        elif key == 27:
+            cv2.destroyAllWindows()
+            raise RuntimeError("Cancelled")
+    
+    cv2.destroyAllWindows()
+    
+    corners = np.array(_selected_points, dtype=np.float32)
+    return corners
+
 
 def _order_corners(pts4):
-    """Sort corners: top-left, top-right, bottom-right, bottom-left"""
+    """Sort corners: TL, TR, BR, BL"""
     pts = np.asarray(pts4, dtype=np.float32)
     s = pts.sum(axis=1)
     d = np.diff(pts, axis=1).ravel()
@@ -13,189 +85,308 @@ def _order_corners(pts4):
     bl = pts[np.argmax(d)]
     return np.array([tl, tr, br, bl], dtype=np.float32)
 
-def _find_board_corners_robust(bgr, cfg):
-    """
-    Enhanced corner detection with multiple strategies:
-    1. HSV color mask (green/white squares)
-    2. Canny + HoughLines (grid lines)
-    3. Template matching (if available)
-    """
-    h, w = bgr.shape[:2]
-    pad = int(0.03 * min(h, w))  # เพิ่ม padding
-    bgr_crop = bgr[pad:h-pad, pad:w-pad].copy()
-    off = np.array([pad, pad], np.float32)
 
-    # Strategy 1: HSV mask for board colors
-    hsv = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2HSV)
-    m_green = cv2.inRange(hsv, (30, 30, 40), (90, 255, 255))
-    m_white = cv2.inRange(hsv, (0, 0, 160), (179, 80, 255))
-    mask = cv2.bitwise_or(m_green, m_white)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((15,15), np.uint8))
+def _auto_detect_corners(bgr):
+    """Advanced auto corner detection with multiple strategies"""
+    h, w = bgr.shape[:2]
     
-    # Find largest contour
-    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not cnts:
-        raise RuntimeError("Cannot find board contour")
+    # Strategy 1: HSV Color Masking (works well for wooden/colored boards)
+    try:
+        corners = _detect_board_hsv_mask(bgr)
+        if corners is not None and _validate_corners(corners, w, h):
+            corners = _order_corners(corners)
+            print("[auto] Strategy 1: HSV Masking SUCCESS")
+            return corners
+    except Exception as e:
+        print(f"[auto] HSV masking failed: {e}")
     
-    cnt = max(cnts, key=cv2.contourArea)
+    # Strategy 2: Enhanced Edge + Hough Lines
+    try:
+        corners = _detect_board_edges_hough(bgr)
+        if corners is not None and _validate_corners(corners, w, h):
+            corners = _order_corners(corners)
+            print("[auto] Strategy 2: Edge+Hough SUCCESS")
+            return corners
+    except Exception as e:
+        print(f"[auto] Edge+Hough failed: {e}")
     
-    # Fit rotated rectangle
-    rect = cv2.minAreaRect(cnt)
-    box = cv2.boxPoints(rect).astype(np.float32)
-    corners = _order_corners(box) + off
+    # Strategy 3: Improved Contour Detection
+    try:
+        corners = _detect_board_contours_improved(bgr)
+        if corners is not None and _validate_corners(corners, w, h):
+            corners = _order_corners(corners)
+            print("[auto] Strategy 3: Improved Contours SUCCESS")
+            return corners
+    except Exception as e:
+        print(f"[auto] Contour detection failed: {e}")
+    
+    # Strategy 4: Conservative crop (fallback)
+    print("[auto] Strategy 4: Conservative crop (fallback)")
+    margin = int(0.08 * min(h, w))
+    corners = np.array([
+        [margin, margin],
+        [w - margin, margin],
+        [w - margin, h - margin],
+        [margin, h - margin]
+    ], dtype=np.float32)
     
     return corners
 
-def _deskew_warped(warped):
-    """
-    Detect slight rotation in warped image and correct it
-    Using Hough Lines to find grid angle
-    """
-    H, W = warped.shape[:2]
-    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(gray, 50, 150)
+def _detect_board_hsv_mask(bgr):
+    """Detect chessboard using HSV color masking"""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, w = bgr.shape[:2]
     
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, 
-                            minLineLength=int(0.3*min(H,W)), 
-                            maxLineGap=20)
+    # HSV ranges for different board colors
+    ranges = [
+        ([5, 20, 80], [25, 100, 220]),    # Light wooden boards
+        ([0, 15, 40], [20, 80, 120]),     # Dark wooden boards  
+        ([0, 0, 150], [180, 30, 255]),    # White/cream boards
+        ([35, 40, 40], [85, 255, 200])   # Green tournament boards
+    ]
     
-    if lines is None or len(lines) < 4:
-        return warped
+    best_mask = None
+    best_area = 0
     
-    # Calculate angles of detected lines
-    angles = []
+    for (lower, upper) in ranges:
+        lower = np.array(lower, dtype=np.uint8)
+        upper = np.array(upper, dtype=np.uint8)
+        
+        mask = cv2.inRange(hsv, lower, upper)
+        
+        # Clean up mask
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        
+        # Find largest contour
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            largest = max(contours, key=cv2.contourArea)
+            area = cv2.contourArea(largest)
+            
+            if area > (h * w * 0.2) and area > best_area:
+                best_area = area
+                best_mask = mask
+    
+    if best_mask is None:
+        return None
+        
+    # Find board contour from best mask
+    contours, _ = cv2.findContours(best_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+        
+    largest = max(contours, key=cv2.contourArea)
+    
+    # Approximate to quadrilateral
+    epsilon = 0.02 * cv2.arcLength(largest, True)
+    approx = cv2.approxPolyDP(largest, epsilon, True)
+    
+    if len(approx) == 4:
+        return approx.reshape(4, 2).astype(np.float32)
+    
+    # If not 4 points, use bounding rect
+    x, y, w_rect, h_rect = cv2.boundingRect(largest)
+    return np.array([
+        [x, y],
+        [x + w_rect, y], 
+        [x + w_rect, y + h_rect],
+        [x, y + h_rect]
+    ], dtype=np.float32)
+
+def _detect_board_edges_hough(bgr):
+    """Detect chessboard using enhanced edge detection and Hough lines"""
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    
+    # Enhanced edge detection with CLAHE
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    enhanced = clahe.apply(gray)
+    
+    # Bilateral filter to reduce noise while keeping edges
+    filtered = cv2.bilateralFilter(enhanced, 9, 75, 75)
+    
+    # Adaptive Canny thresholds
+    median = np.median(filtered)
+    lower = int(max(0, 0.7 * median))
+    upper = int(min(255, 1.3 * median))
+    edges = cv2.Canny(filtered, lower, upper)
+    
+    # Hough line detection
+    lines = cv2.HoughLinesP(
+        edges, rho=1, theta=np.pi/180, threshold=80,
+        minLineLength=min(h, w) * 0.3, maxLineGap=20
+    )
+    
+    if lines is None:
+        return None
+    
+    # Separate horizontal and vertical lines
+    h_lines = []
+    v_lines = []
+    
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        angle = np.arctan2(y2 - y1, x2 - x1)
-        angles.append(angle)
+        
+        if x2 - x1 != 0:
+            angle = abs(np.arctan((y2 - y1) / (x2 - x1)) * 180 / np.pi)
+        else:
+            angle = 90
+        
+        if angle < 10 or angle > 170:  # Horizontal
+            h_lines.append((x1, y1, x2, y2))
+        elif 80 < angle < 100:  # Vertical
+            v_lines.append((x1, y1, x2, y2))
     
-    # Find dominant horizontal/vertical angles
-    angles = np.array(angles)
-    # Snap to nearest 0° or 90°
-    angles_deg = np.rad2deg(angles)
-    angles_deg = angles_deg % 90  # normalize to 0-90
+    if len(h_lines) < 2 or len(v_lines) < 2:
+        return None
     
-    # If most lines are close to 0° or 90°, board is straight
-    median_angle = np.median(angles_deg)
-    if median_angle < 45:
-        correction = -median_angle
-    else:
-        correction = 90 - median_angle
+    # Find extreme lines
+    h_lines = sorted(h_lines, key=lambda l: (l[1] + l[3]) / 2)
+    v_lines = sorted(v_lines, key=lambda l: (l[0] + l[2]) / 2)
     
-    if abs(correction) < 0.5:  # Already straight
-        return warped
+    top_line = h_lines[0]
+    bottom_line = h_lines[-1] 
+    left_line = v_lines[0]
+    right_line = v_lines[-1]
     
-    # Rotate to correct
-    center = (W//2, H//2)
-    M = cv2.getRotationMatrix2D(center, correction, 1.0)
-    rotated = cv2.warpAffine(warped, M, (W, H), 
-                             flags=cv2.INTER_LINEAR,
-                             borderMode=cv2.BORDER_REPLICATE)
+    def line_intersection(line1, line2):
+        x1, y1, x2, y2 = line1
+        x3, y3, x4, y4 = line2
+        
+        denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4)
+        if abs(denom) < 1e-10:
+            return None
+            
+        t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom
+        x = x1 + t*(x2-x1)
+        y = y1 + t*(y2-y1)
+        return (x, y)
     
-    return rotated
+    # Find corner intersections
+    tl = line_intersection(top_line, left_line)
+    tr = line_intersection(top_line, right_line)
+    bl = line_intersection(bottom_line, left_line)
+    br = line_intersection(bottom_line, right_line)
+    
+    if None in [tl, tr, bl, br]:
+        return None
+    
+    return np.array([tl, tr, br, bl], dtype=np.float32)
 
-def warp_board_v2(bgr, cfg):
-    """
-    Improved warping with deskew correction
-    """
+def _detect_board_contours_improved(bgr):
+    """Improved contour-based detection"""
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    
+    # Try multiple preprocessing approaches
+    approaches = [
+        cv2.GaussianBlur(gray, (5, 5), 0),
+        cv2.medianBlur(gray, 5),
+        cv2.bilateralFilter(gray, 9, 75, 75)
+    ]
+    
+    for processed in approaches:
+        edges = cv2.Canny(processed, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            continue
+        
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        
+        for contour in contours[:10]:
+            area = cv2.contourArea(contour)
+            
+            if area < (h * w) * 0.15:  # Lowered threshold
+                continue
+                
+            # Try different epsilon values for approximation
+            for eps_factor in [0.01, 0.02, 0.03, 0.05]:
+                epsilon = eps_factor * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                
+                if len(approx) == 4:
+                    return approx.reshape(4, 2).astype(np.float32)
+    
+    return None
+
+def _validate_corners(corners, img_w, img_h):
+    """Validate that corners form a reasonable quadrilateral"""
+    if corners is None or len(corners) != 4:
+        return False
+    
+    # All corners should be within image bounds (with small margin)
+    margin = 5
+    for x, y in corners:
+        if x < -margin or x >= img_w + margin or y < -margin or y >= img_h + margin:
+            return False
+    
+    # Calculate area - should be reasonable size
+    area = cv2.contourArea(corners)
+    min_area = (img_w * img_h) * 0.1  # At least 10% of image
+    max_area = (img_w * img_h) * 0.95  # At most 95% of image
+    
+    if area < min_area or area > max_area:
+        return False
+    
+    return True
+
+
+def warp_board_v2(bgr, cfg, manual_mode=False, video_name=None):
+    """Perspective warp with fallback"""
     w = cfg["board"]["warp_size"]
-    src = _find_board_corners_robust(bgr, cfg)
-    dst = np.float32([[0,0], [w,0], [w,w], [0,w]])
     
+    if manual_mode:
+        src = select_corners_manually(bgr, max_display_height=800)
+    else:
+        src = _auto_detect_corners(bgr)
+    
+    dst = np.float32([[0, 0], [w, 0], [w, w], [0, w]])
     M = cv2.getPerspectiveTransform(src, dst)
-    warped = cv2.warpPerspective(bgr, M, (w, w))
     
-    # Apply rotation correction
-    warped = _deskew_warped(warped)
+    warped = cv2.warpPerspective(
+        bgr, M, (w, w),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(128, 128, 128)
+    )
     
     return warped, M
 
 
-# ===== FIX 2: Robust Grid Detection Using Multiple Methods =====
-
-def _detect_grid_by_color_transitions(warped):
-    """
-    Alternative method: detect grid by analyzing color transitions
-    Works well when lines are hard to detect
-    """
-    H, W = warped.shape[:2]
-    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    
-    # Compute gradients
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-    
-    # Sum along axes to find grid lines
-    proj_x = np.abs(sobelx).sum(axis=0)  # vertical lines
-    proj_y = np.abs(sobely).sum(axis=1)  # horizontal lines
-    
-    # Smooth projections
-    from scipy.signal import find_peaks
-    proj_x = cv2.GaussianBlur(proj_x.reshape(1, -1), (1, 21), 0).ravel()
-    proj_y = cv2.GaussianBlur(proj_y.reshape(1, -1), (1, 21), 0).ravel()
-    
-    # Find peaks (grid lines)
-    peaks_x, _ = find_peaks(proj_x, distance=W//10, prominence=proj_x.max()*0.1)
-    peaks_y, _ = find_peaks(proj_y, distance=H//10, prominence=proj_y.max()*0.1)
-    
-    # Need exactly 9 lines
-    if len(peaks_x) >= 9 and len(peaks_y) >= 9:
-        # Take strongest 9 peaks
-        idx_x = np.argsort(proj_x[peaks_x])[-9:]
-        idx_y = np.argsort(proj_y[peaks_y])[-9:]
-        xs = np.sort(peaks_x[idx_x])
-        ys = np.sort(peaks_y[idx_y])
-        return xs, ys
-    
-    return None, None
-
-def split_grid_v2(warped, cell_px):
-    """
-    Enhanced grid splitting with multiple detection strategies
-    """
+def split_grid_v2_debug(warped, cell_px):
+    """Grid splitting"""
     H, W = warped.shape[:2]
     
-    # Try Method 1: Hough Lines (from original code)
-    from Chess_Detection_Competition.board import _grid_lines_from_hough
-    xs, ys = _grid_lines_from_hough(warped, want=9)
+    margin = int(0.05 * min(H, W))
+    xs = np.linspace(margin, W - margin, 9)
+    ys = np.linspace(margin, H - margin, 9)
     
-    # Try Method 2: Color transitions (if Hough fails)
-    if xs is None or ys is None:
-        print("[split_grid_v2] Hough failed, trying color transitions...")
-        xs, ys = _detect_grid_by_color_transitions(warped)
+    cells = _extract_cells(warped, xs, ys, cell_px)
+    visualize_grid_detection(warped, xs, ys, "debug/grid_overlay.jpg")
     
-    # Fallback Method 3: Equal division with margin
-    if xs is None or ys is None:
-        print("[split_grid_v2] All methods failed, using equal division")
-        # Add 5% margin to avoid edge artifacts
-        margin = int(0.05 * min(H, W))
-        H_inner = H - 2*margin
-        W_inner = W - 2*margin
-        step_x = W_inner / 8
-        step_y = H_inner / 8
-        
-        xs = np.array([margin + i*step_x for i in range(9)])
-        ys = np.array([margin + i*step_y for i in range(9)])
-    
-    # Crop cells with safety checks
+    return cells, xs, ys
+
+
+def _extract_cells(warped, xs, ys, cell_px):
+    """Extract 64 cells"""
+    H, W = warped.shape[:2]
     cells = []
+    
     for r in range(8):
         for c in range(8):
-            x0 = int(xs[c])
-            x1 = int(xs[c+1])
-            y0 = int(ys[r])
-            y1 = int(ys[r+1])
+            x0, x1 = int(xs[c]), int(xs[c+1])
+            y0, y1 = int(ys[r]), int(ys[r+1])
             
-            # Add small margin to avoid grid lines
-            margin_px = max(2, int(0.02 * min(x1-x0, y1-y0)))
-            x0 += margin_px
-            x1 -= margin_px
-            y0 += margin_px
-            y1 -= margin_px
+            margin = 3
+            x0 += margin
+            x1 -= margin
+            y0 += margin
+            y1 -= margin
             
-            # Safety bounds check
             x0 = max(0, min(x0, W-1))
             x1 = max(x0+1, min(x1, W))
             y0 = max(0, min(y0, H-1))
@@ -203,14 +394,33 @@ def split_grid_v2(warped, cell_px):
             
             patch = warped[y0:y1, x0:x1]
             
-            # Ensure patch is valid
             if patch.size == 0:
-                print(f"Warning: Empty patch at ({r},{c})")
                 patch = np.zeros((cell_px, cell_px, 3), dtype=np.uint8)
             else:
-                patch = cv2.resize(patch, (cell_px, cell_px), 
-                                   interpolation=cv2.INTER_AREA)
+                patch = cv2.resize(patch, (cell_px, cell_px), interpolation=cv2.INTER_AREA)
             
             cells.append(((r, c), patch))
     
     return cells
+
+
+def visualize_grid_detection(warped, xs, ys, save_path="debug/grid.jpg"):
+    """Visualize grid"""
+    vis = warped.copy()
+    H, W = vis.shape[:2]
+    
+    for x in xs:
+        cv2.line(vis, (int(x), 0), (int(x), H), (0, 255, 0), 2)
+    
+    for y in ys:
+        cv2.line(vis, (0, int(y)), (W, int(y)), (255, 0, 0), 2)
+    
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    cv2.imwrite(save_path, vis)
+    return vis
+
+
+def split_grid_v2(warped, cell_px):
+    cells, _, _ = split_grid_v2_debug(warped, cell_px)
+    return cells
+
