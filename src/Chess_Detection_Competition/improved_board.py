@@ -358,10 +358,12 @@ def warp_board_v2(bgr, cfg, manual_mode=False, video_name=None):
 
 
 def split_grid_v2_debug(warped, cell_px):
-    """Grid splitting"""
+    """Grid splitting - Trivial split method (matches LiveChess2FEN)"""
     H, W = warped.shape[:2]
-    
-    margin = int(0.05 * min(H, W))
+
+    # No outer margin - direct division like LiveChess2FEN
+    # Reference: LiveChess2FEN/lc2fen/split_board.py:split_board_image_trivial()
+    margin = 0  # Changed from 0.05 to match LiveChess2FEN
     xs = np.linspace(margin, W - margin, 9)
     ys = np.linspace(margin, H - margin, 9)
     

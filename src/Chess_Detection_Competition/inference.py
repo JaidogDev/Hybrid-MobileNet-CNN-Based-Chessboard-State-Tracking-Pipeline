@@ -30,13 +30,7 @@ def _load_classes(root: Path) -> List[str]:
 
 def _prep_tensor(bgr: np.ndarray, size: int) -> np.ndarray:
     """BGR -> RGB -> preprocess_input -> (1,H,W,3) float32"""
-    # ✅ เพิ่ม histogram equalization
-    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    l = cv2.equalizeHist(l)
-    lab = cv2.merge([l, a, b])
-    bgr = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-    
+    # REMOVED histogram equalization to match training preprocessing
     rgb = cv2.cvtColor(cv2.resize(bgr, (size, size)), cv2.COLOR_BGR2RGB).astype(np.float32)
     x   = preprocess_input(rgb)
     return np.expand_dims(x, axis=0)
