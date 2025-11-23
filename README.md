@@ -1,5 +1,21 @@
-# Chess Detection Technique Analysis
+<p align="center">
+  <img src="output/images/frame_analysis_PROPERLY_FIXED_2_frame150.jpg" width="500">
+</p>
 
+<p align="center">
+  <em>Example output frame from the video after board alignment and per-cell prediction.</em>
+</p>
+
+### Sample Text-Based Board Output (ASCII)
+<p align="center">
+  <img src="output/images/5.png" width="350">
+</p>
+
+<p align="center">
+  <em>Example ASCII-based board state printed from the pipeline (Frame 2).</em>
+</p>
+
+# Chess Detection Technique Analysis
 ## Pipeline Overview
 
 ```
@@ -87,6 +103,15 @@ Camera View (angled):
 - Taller pieces (Queen, King, Rook) → tops appear in neighboring cells
 - The effect is worse with angled cameras
 
+#### Example: 3D height causing misalignment  
+<p align="center">
+  <img src="output/images/3.png" width="350">
+</p>
+
+<p align="center">
+  <img src="output/images/4.png" width="350">
+</p>
+
 ### Other Limitations
 
 | Limitation | Impact |
@@ -162,11 +187,44 @@ Chess_Detection_Competition/
 ## Usage
 
 ```bash
-# Run full pipeline
-".venv312\Scripts\python.exe" run_pipeline.py
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+py -3.12 -m venv .venv312
+.\.venv312\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+python run_pipeline.py
 ```
 
 **Outputs:**
 - `output/predictions.csv` - FEN notation per frame
 - `output/annotated_video.mp4` - Video with predictions overlaid
 - `output/images/` - Annotated frame images
+
+### Sample Output Images
+
+<p align="center">
+  <a href="output/images/1 (2).png">
+    <img src="output/images/1 (2).png" width="350">
+  </a>
+</p>
+
+<p align="center">
+  <em>Example output image #1 — board alignment + piece prediction.</em>
+</p>
+
+<br>
+
+<p align="center">
+  <a href="output/images/2 (1).png">
+    <img src="output/images/2 (1).png" width="350">
+  </a>
+</p>
+
+<p align="center">
+  <em>Example output image #2 — grid cell extraction + per-cell CNN classification.</em>
+</p>
+
+
