@@ -21,6 +21,56 @@
 ```
 Video Frame → Board Detection → Perspective Warp → Inner Board Crop → Cell Extraction → CNN Prediction → Output
 ```
+## Architecture Overview
+
+  ### What Uses MobileNet vs Traditional Computer Vision
+
+  | Stage | Method | Type |
+  |-------|--------|------|
+  | **Board Detection** | HSV, Canny, Hough | Traditional CV (logic code) |
+  | **Perspective Warp** | Homography transform | Mathematical transformation |
+  | **Inner Board Crop** | 8% margin calculation | Simple arithmetic |
+  | **Grid Extraction** | `np.linspace(0, W, 9)` | Uniform division |
+  | **Cell Classification** | **MobileNetV2** | **Deep Learning (CNN)** |
+
+### Pipeline Flow
+
+  ```
+  ┌─────────────────────────────┐     ┌─────────────────────────────┐
+  │   Traditional CV Pipeline   │     │   Deep Learning Pipeline    │
+  ├─────────────────────────────┤     ├─────────────────────────────┤
+  │                             │     │                             │
+  │  1. Board Detection         │     │  5. Cell Classification     │
+  │     (HSV, Hough, Canny)     │ ──► │     (MobileNetV2 CNN)       │
+  │                             │     │                             │
+  │  2. Perspective Warp        │     │  6. Feature Extraction      │
+  │     (Homography)            │     │     (Learned features)      │
+  │                             │     │                             │
+  │  3. Inner Board Crop        │     │  7. 13-Class Prediction     │
+  │     (8% margin)             │     │     (Empty + 12 pieces)     │
+  │                             │     │                             │
+  │  4. Grid Extraction         │     │                             │
+  │     (64 cells, 96×96)       │     │                             │
+  │                             │     │                             │
+  └─────────────────────────────┘     └─────────────────────────────┘
+  ```
+
+  ### Feature Extraction
+
+  The pipeline uses two types of features:
+
+  1. **Traditional CV Features** (hand-crafted):
+     - HSV color values for board detection
+     - Canny edges for boundary detection
+     - Hough lines for corner finding
+     - Contours for shape analysis
+
+  2. **Deep Features** (learned by MobileNet):
+     - Automatically extracted from 96×96 cell images
+     - Hierarchical representations learned during training
+     - Used for piece type classification (13 classes)
+
+  **Key Point:** MobileNet is **only** used for classifying the 64 extracted cells. All board detection, warping, and grid extraction use traditional computer vision techniques.
 
 ---
 
